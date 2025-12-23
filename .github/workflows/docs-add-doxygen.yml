@@ -37,8 +37,7 @@ jobs:
       - run: |
           if ! git diff --quiet; then
             git add -A
-            git commit -m "docs: Add Doxygen comments
-
-Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
+            git commit -m "docs: Add Doxygen comments" \
+              -m "Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
             git push origin HEAD
           fi
