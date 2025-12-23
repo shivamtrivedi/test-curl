@@ -1,0 +1,71 @@
+name: README Auto-Update
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: readme-auto-update-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Configure git
+        run: |
+          git config user.name "factory-droid[bot]"
+          git config user.email "138933559+factory-droid[bot]@users.noreply.github.com"
+
+      - name: Setup droid CLI
+        run: |
+          curl -fsSL https://app.factory.ai/cli | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Generate PR diff
+        run: |
+          git diff ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} > pr_diff.txt
+
+      - name: Update README via droid
+        env:
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY_PROD }}
+        run: |
+          cat > prompt.txt << 'EOF'
+          Analyze the PR changes in pr_diff.txt and update README.md accordingly.
+
+          Instructions:
+          - Review all code changes in the diff
+          - Identify any new features, functions, or capabilities added
+          - Update README.md to document these changes
+          - Maintain existing README style and structure
+          - Add concise descriptions with usage examples where appropriate
+          - If no documentation-worthy changes exist, leave README unchanged
+          EOF
+
+          $HOME/.local/bin/droid exec --auto medium --model gpt-4o -f prompt.txt
+
+      - name: Commit README changes
+        run: |
+          if ! git diff --quiet README.md; then
+            git add README.md
+            git commit -m "docs: Auto-update README for PR changes
+
+Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
+            git push origin HEAD
+            echo "README updated and committed"
+          else
+            echo "No README changes needed"
+          fi
