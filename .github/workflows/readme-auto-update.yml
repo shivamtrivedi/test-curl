@@ -55,7 +55,7 @@ jobs:
           - If no documentation-worthy changes exist, leave README unchanged
           EOF
 
-          $HOME/.local/bin/droid exec --auto medium --model  gpt-5.1 -f prompt.txt
+          $HOME/.local/bin/droid exec --auto medium --model gpt-5.1 -f prompt.txt
 
       - name: Commit README changes
         run: |
