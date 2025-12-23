@@ -2,10 +2,6 @@ name: Droid Exec - Documentation Suite
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    branches:
-      - doc-demo
-      - security-droid
-      - master
 
 concurrency:
   group: droid-exec-docs-${{ github.event.pull_request.number }}
