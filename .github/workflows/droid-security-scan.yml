@@ -234,7 +234,7 @@ jobs:
           EOFPROMPT
 
           echo "Running Droid security analysis..."
-          droid exec --output-format debug --auto medium --model gpt-4o -f security-prompt.txt 2>&1
+          droid exec --output-format debug --auto medium --model gpt-5.1-codex -f security-prompt.txt 2>&1
 
           # Check if droid created the output
           if [ ! -f security-comments.json ]; then
