@@ -399,34 +399,27 @@ jobs:
             if (mediumCount > 0) summary += `- 🟡 MEDIUM: ${mediumCount}\n`;
             if (lowCount > 0) summary += `- 🔵 LOW: ${lowCount}\n`;
             summary += '\n**Scanned by:** Semgrep + Droid AI\n';
-            summary += '\nSee inline comments for details.';
+            summary += '\n---\n\n';
             
-            // Post review with comments
+            // Post findings as issue comment with details
+            let detailedReport = summary;
+            findings.forEach((f, i) => {
+              detailedReport += `### ${i+1}. [${f.severity}] ${f.path}\n\n`;
+              detailedReport += `${f.body}\n\n`;
+              detailedReport += `---\n\n`;
+            });
+            
             try {
-              await github.rest.pulls.createReview({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: prNumber,
-                event: 'COMMENT',
-                body: summary,
-                comments: findings.map(f => ({
-                  path: f.path,
-                  position: f.position,
-                  body: f.body
-                }))
-              });
-              core.info(`Posted review with ${findings.length} security findings`);
-            } catch (error) {
-              core.warning(`Failed to post full review: ${error.message}`);
-              // Fallback: post as regular comment
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber,
-                body: summary + '\n\n' + findings.map((f, i) => 
-                  `### Finding ${i+1}: ${f.path}\n${f.body}`
-                ).join('\n\n---\n\n')
+                body: detailedReport
               });
+              core.info(`Posted detailed security report with ${findings.length} findings`);
+            } catch (error) {
+              core.error(`Failed to post security report: ${error.message}`);
+              throw error;
             }
 
       - name: Upload security scan artifacts
