@@ -1,0 +1,353 @@
+name: Security Scan
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: security-scan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Python for Semgrep
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Semgrep
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install semgrep
+          semgrep --version
+
+      - name: Run Semgrep Security Scan
+        id: semgrep
+        continue-on-error: true
+        run: |
+          echo "Running Semgrep with C security rules..."
+          
+          semgrep --config "p/c" \
+                  --config "p/security-audit" \
+                  --json \
+                  --output semgrep-results.json \
+                  . || true
+          
+          if [ -f semgrep-results.json ]; then
+            echo "Semgrep scan completed"
+            FINDINGS=$(cat semgrep-results.json | jq '.results | length')
+            echo "semgrep_findings=$FINDINGS" >> $GITHUB_OUTPUT
+            echo "Found $FINDINGS Semgrep issues"
+          else
+            echo "0" > semgrep-count.txt
+            echo "semgrep_findings=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup droid CLI
+        run: |
+          curl -fsSL https://app.factory.ai/cli | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          $HOME/.local/bin/droid --version
+
+      - name: Prepare context for Droid
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = '.git/security_review';
+            fs.mkdirSync(path, { recursive: true });
+
+            const prNumber = context.payload.pull_request.number;
+            
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100
+            });
+            fs.writeFileSync(`${path}/existing_comments.json`, JSON.stringify(comments, null, 2));
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100
+            });
+            const reduced = files.map(f => ({ filename: f.filename, patch: f.patch, status: f.status }));
+            fs.writeFileSync(`${path}/files.json`, JSON.stringify(reduced, null, 2));
+
+            const { execSync } = require('child_process');
+            const base = context.payload.pull_request.base.sha;
+            const head = context.payload.pull_request.head.sha;
+            try {
+              const diff = execSync(`git diff ${base}...${head}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+              fs.writeFileSync(`${path}/diff.txt`, diff);
+            } catch (e) {
+              fs.writeFileSync(`${path}/diff.txt`, '');
+            }
+
+      - name: Run Droid Security Analysis
+        env:
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY_PROD }}
+        timeout-minutes: 15
+        run: |
+          cp .git/security_review/existing_comments.json ./existing_comments.json
+          cp .git/security_review/files.json ./files.json
+          cp .git/security_review/diff.txt ./diff.txt
+          
+          if [ ! -f semgrep-results.json ]; then
+            echo '{"results":[]}' > ./semgrep-results.json
+          fi
+
+          echo "Files prepared:"
+          ls -la *.json diff.txt 2>/dev/null || true
+
+          cat > prompt.txt << 'EOF'
+          You are a security auditor for the curl project. Review the PR diff and create inline security comments.
+
+          Input files (in current directory):
+          - diff.txt: code changes to review
+          - files.json: file patches with line numbers
+          - existing_comments.json: skip issues already mentioned
+          - semgrep-results.json: pattern-based findings (don't duplicate)
+          - docs/libcurl/libcurl-security.md: security guidelines
+          - review_guidelines.md: code quality guidelines
+
+          Task: Create comments.json with this exact format:
+          [{ "path": "path/to/file.c", "position": 42, "body": "Your comment here" }]
+
+          Security checks:
+          1. Memory Safety: Buffer overflows (strcpy, sprintf), use-after-free, double-free, NULL dereferences
+          2. Integer Safety (§7.3.1): Overflows, underflows, sign conversions
+          3. Input Validation: Unvalidated input, format strings, injection
+          4. Resource Management: Memory/file descriptor leaks
+          5. Authentication: Credential handling, weak crypto
+          6. Race Conditions: TOCTOU issues
+          7. API Misuse: Incorrect curl API usage
+
+          Comment format:
+          **[SEVERITY]** Issue title
+
+          Guideline: <section reference>
+
+          Detailed explanation of the security issue.
+
+          Suggested fix:
+          <concrete recommendation>
+
+          Important:
+          - Use "position" from files.json patches (diff positions, not line numbers)
+          - Only comment on changed lines in the diff
+          - Don't duplicate Semgrep findings
+          - Severity: CRITICAL, HIGH, MEDIUM, LOW
+          - Output ONLY comments.json
+          EOF
+
+          echo "Running Droid..."
+          droid exec --output-format debug --auto medium --model gpt-5.1-codex -f prompt.txt 2>&1 || true
+
+          if [ ! -f comments.json ]; then
+            echo "⚠️ Creating empty comments.json"
+            echo '[]' > comments.json
+          fi
+
+          echo "=== Droid Results ==="
+          cat comments.json || echo "[]" > comments.json
+
+      - name: Convert Semgrep to inline comments
+        if: always()
+        run: |
+          if [ ! -f semgrep-results.json ]; then
+            echo '[]' > semgrep-comments.json
+            exit 0
+          fi
+
+          python3 << 'EOFPYTHON'
+          import json
+          import re
+
+          try:
+              with open('semgrep-results.json', 'r') as f:
+                  semgrep_data = json.load(f)
+              
+              with open('.git/security_review/files.json', 'r') as f:
+                  files_data = json.load(f)
+              
+              def parse_patch_positions(patch):
+                  if not patch:
+                      return {}
+                  
+                  positions = {}
+                  diff_position = 0
+                  current_line = 0
+                  
+                  for line in patch.split('\n'):
+                      diff_position += 1
+                      hunk_match = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@', line)
+                      if hunk_match:
+                          current_line = int(hunk_match.group(1))
+                          continue
+                      
+                      if line.startswith('+') or line.startswith(' '):
+                          positions[current_line] = diff_position
+                          current_line += 1
+                  
+                  return positions
+              
+              file_positions = {}
+              for file_info in files_data:
+                  filename = file_info['filename']
+                  patch = file_info.get('patch', '')
+                  file_positions[filename] = parse_patch_positions(patch)
+              
+              comments = []
+              for result in semgrep_data.get('results', []):
+                  path = result.get('path', '').lstrip('./')
+                  line = result.get('start', {}).get('line', 0)
+                  check_id = result.get('check_id', 'unknown')
+                  message = result.get('extra', {}).get('message', result.get('message', 'Security issue'))
+                  severity = result.get('extra', {}).get('severity', 'WARNING').upper()
+                  
+                  sev_map = {'ERROR': 'HIGH', 'WARNING': 'MEDIUM', 'INFO': 'LOW'}
+                  mapped_severity = sev_map.get(severity, 'MEDIUM')
+                  
+                  position = file_positions.get(path, {}).get(line)
+                  
+                  if position:
+                      body = f"**[{mapped_severity}]** Semgrep: {check_id}\n\n{message}\n\nDetected by: Semgrep static analysis"
+                      comments.append({
+                          'path': path,
+                          'position': position,
+                          'body': body
+                      })
+              
+              with open('semgrep-comments.json', 'w') as f:
+                  json.dump(comments, f, indent=2)
+              
+              print(f"Converted {len(comments)} Semgrep findings")
+          
+          except Exception as e:
+              print(f"Error: {e}")
+              import traceback
+              traceback.print_exc()
+              with open('semgrep-comments.json', 'w') as f:
+                  json.dump([], f)
+          EOFPYTHON
+
+      - name: Merge findings
+        if: always()
+        run: |
+          [ ! -f semgrep-comments.json ] && echo '[]' > semgrep-comments.json
+          [ ! -f comments.json ] && echo '[]' > comments.json
+          
+          python3 << 'EOFPYTHON'
+          import json
+
+          try:
+              with open('semgrep-comments.json', 'r') as f:
+                  semgrep = json.load(f)
+              with open('comments.json', 'r') as f:
+                  droid = json.load(f)
+              
+              all_comments = semgrep + droid
+              
+              with open('all-security-comments.json', 'w') as f:
+                  json.dump(all_comments, f, indent=2)
+              
+              print(f"Total: {len(all_comments)} (Semgrep: {len(semgrep)}, Droid: {len(droid)})")
+          
+          except Exception as e:
+              print(f"Error: {e}")
+              with open('all-security-comments.json', 'w') as f:
+                  json.dump([], f)
+          EOFPYTHON
+
+          cat all-security-comments.json
+
+      - name: Post inline security review
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const prNumber = context.payload.pull_request.number;
+            
+            if (!fs.existsSync('all-security-comments.json')) {
+              core.info('No findings');
+              return;
+            }
+            
+            const findings = JSON.parse(fs.readFileSync('all-security-comments.json', 'utf8'));
+            
+            if (!Array.isArray(findings) || findings.length === 0) {
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                event: 'COMMENT',
+                body: '## 🔒 Security Scan\n\n✅ No security issues found.\n\n**Scanned by:** Semgrep + Droid AI'
+              });
+              return;
+            }
+            
+            const summary = `## 🚨 Security Findings\n\n**Total:** ${findings.length}\n\n**Scanned by:** Semgrep + Droid AI\n\nSee inline comments below.`;
+            
+            try {
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                event: 'COMMENT',
+                body: summary,
+                comments: findings.map(f => ({
+                  path: f.path,
+                  position: f.position,
+                  body: f.body
+                }))
+              });
+              core.info(`Posted ${findings.length} inline comments`);
+            } catch (error) {
+              core.warning(`Inline failed: ${error.message}`);
+              let report = summary + '\n\n---\n\n';
+              findings.forEach((f, i) => {
+                report += `### ${i+1}. ${f.path}\n\n${f.body}\n\n---\n\n`;
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: report
+              });
+            }
+
+      - name: Fail if issues found
+        run: |
+          if [ ! -f all-security-comments.json ]; then
+            echo "✅ No findings file"
+            exit 0
+          fi
+          
+          COUNT=$(jq 'length' all-security-comments.json 2>/dev/null || echo "0")
+          
+          if [ "$COUNT" -gt 0 ]; then
+            echo "❌ SECURITY ISSUES: $COUNT"
+            echo "Review inline comments in PR"
+            exit 1
+          fi
+          
+          echo "✅ No issues"

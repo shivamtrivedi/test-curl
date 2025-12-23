@@ -1,0 +1,23 @@
+# Semgrep Security Rules for curl
+
+rules:
+  - id: dangerous-strcpy
+    patterns:
+      - pattern: strcpy(...)
+    message: "Use of strcpy() can cause buffer overflows. Use strncpy() or snprintf() instead."
+    severity: ERROR
+    languages: [c]
+    
+  - id: dangerous-gets
+    patterns:
+      - pattern: gets(...)
+    message: "gets() is unsafe and deprecated. Use fgets() instead."
+    severity: ERROR
+    languages: [c]
+    
+  - id: dangerous-sprintf
+    patterns:
+      - pattern: sprintf(...)
+    message: "sprintf() can cause buffer overflows. Use snprintf() instead."
+    severity: ERROR
+    languages: [c]
