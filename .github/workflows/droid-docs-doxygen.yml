@@ -59,7 +59,7 @@ jobs:
           Files changed in this PR are listed in: changed_files.txt
           EOF
 
-          $HOME/.local/bin/droid exec --auto medium --model gpt-4o -f prompt.txt
+          $HOME/.local/bin/droid exec --auto medium --model glm-4.6 -f prompt.txt
 
       - name: Commit and push
         run: |

@@ -32,7 +32,7 @@ jobs:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY_PROD }}
         run: |
           echo "Add Doxygen comments to functions in C/H files listed in files.txt" > prompt.txt
-          $HOME/.local/bin/droid exec --auto medium --model gpt-4o -f prompt.txt || echo "Droid exec completed"
+          $HOME/.local/bin/droid exec --auto medium --model glm-4.6 -f prompt.txt || echo "Droid exec completed"
       
       - run: |
           if ! git diff --quiet; then
