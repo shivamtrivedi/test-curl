@@ -1,0 +1,44 @@
+name: Add Doxygen Comments
+on:
+  pull_request
+
+jobs:
+  doxygen:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+      
+      - run: |
+          git config user.name "factory-droid[bot]"
+          git config user.email "138933559+factory-droid[bot]@users.noreply.github.com"
+      
+      - run: |
+          curl -fsSL https://app.factory.ai/cli | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      
+      - run: |
+          git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '\.(c|h)$' > files.txt || echo "No C files"
+          cat files.txt
+      
+      - name: Add docs
+        if: hashFiles('files.txt') != ''
+        env:
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY_PROD }}
+        run: |
+          echo "Add Doxygen comments to functions in C/H files listed in files.txt" > prompt.txt
+          $HOME/.local/bin/droid exec --auto medium --model gpt-4o -f prompt.txt || echo "Droid exec completed"
+      
+      - run: |
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "docs: Add Doxygen comments
+
+Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
+            git push origin HEAD
+          fi
