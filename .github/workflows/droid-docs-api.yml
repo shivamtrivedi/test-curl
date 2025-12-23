@@ -1,0 +1,85 @@
+name: Droid Docs API
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: droid-docs-api-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  create-api-docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Configure git
+        run: |
+          git config user.name "factory-droid[bot]"
+          git config user.email "138933559+factory-droid[bot]@users.noreply.github.com"
+
+      - name: Setup droid CLI
+        run: |
+          curl -fsSL https://app.factory.ai/cli | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Get new lib files
+        id: changed-files
+        run: |
+          git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} | grep -E '^lib/.*\.(c|h)$' > new_lib_files.txt || true
+          if [ -s new_lib_files.txt ]; then
+            echo "has_lib_files=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_lib_files=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create API documentation
+        if: steps.changed-files.outputs.has_lib_files == 'true'
+        env:
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY_PROD }}
+        run: |
+          cat > prompt.txt << 'EOF'
+          Create API documentation in docs/ for new library code.
+
+          Include:
+          - Title and module overview
+          - Function list with signatures
+          - Detailed descriptions
+          - Parameters and return values
+          - Usage examples
+          - Error handling notes
+
+          Format:
+          - Use markdown
+          - For lib/util_name.c → create docs/util_name.md
+          - Follow structure of existing docs/
+
+          New library files are listed in: new_lib_files.txt
+          EOF
+
+          $HOME/.local/bin/droid exec --auto medium --model gpt-4o -f prompt.txt
+
+      - name: Commit and push
+        run: |
+          if [ -n "$(git ls-files --others --exclude-standard docs/)" ] || ! git diff --quiet docs/; then
+            git add docs/
+            git commit -m "docs: Add API documentation
+
+Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
+            git push origin HEAD
+            echo "✅ API documentation created"
+          else
+            echo "ℹ️  No API documentation needed"
+          fi
