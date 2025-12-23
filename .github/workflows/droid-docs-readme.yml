@@ -101,6 +101,7 @@ jobs:
 
           Comment format:
           - Use GitHub's suggestion block to propose the exact README changes
+          - IMPORTANT: Suggestion blocks REPLACE the line they're on, so include ALL lines that should remain
           - Keep suggestions concise and technical
 
           Output:

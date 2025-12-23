@@ -92,6 +92,8 @@ jobs:
 
           Comment format:
           - Use GitHub's suggestion block to propose the exact Doxygen comment
+          - IMPORTANT: Suggestion blocks REPLACE the line they're on, so you MUST include the original code line after your comment
+          - Example: If suggesting a comment before `int foo(int x)`, your suggestion block must contain BOTH the comment AND `int foo(int x)`
           - Keep suggestions concise and technical
 
           Positioning:

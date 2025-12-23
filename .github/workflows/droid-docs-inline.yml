@@ -104,6 +104,8 @@ jobs:
 
           Comment format:
           - Use GitHub's suggestion block to propose the exact inline comment
+          - IMPORTANT: Suggestion blocks REPLACE the line they're on, so you MUST include the original code line after your comment
+          - Example: If adding a comment before `x = y & 0xFF;`, your suggestion must contain BOTH the comment AND `x = y & 0xFF;`
           - Keep suggestions concise and technical
 
           Positioning:
