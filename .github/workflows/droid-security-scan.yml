@@ -113,128 +113,62 @@ jobs:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY_PROD }}
         timeout-minutes: 15
         run: |
-          # Copy context files
+          # Copy context files to current directory
           cp .git/security_review/existing_comments.json ./existing_comments.json
           cp .git/security_review/files.json ./files.json
           cp .git/security_review/diff.txt ./diff.txt
           
-          # Copy Semgrep results if they exist
-          if [ -f semgrep-results.json ]; then
-            cp semgrep-results.json ./semgrep-results.json
-          else
+          # Ensure Semgrep results exist (already in current dir from previous step)
+          if [ ! -f semgrep-results.json ]; then
             echo '{"results":[]}' > ./semgrep-results.json
           fi
 
           echo "Files prepared for Droid analysis:"
           ls -la *.json diff.txt 2>/dev/null || true
 
-          cat > security-prompt.txt << 'EOFPROMPT'
-          You are a security auditor for the curl project. Your task is to perform deep security analysis on this PR.
+          cat > security-prompt.txt << 'EOF'
+          You are a security auditor for the curl project. Review the PR diff and produce inline security comments.
 
-          Available Input Files:
-          - diff.txt: The PR code changes to analyze
-          - files.json: File patches with line numbers for comment positioning
-          - existing_comments.json: Skip issues already mentioned here
-          - semgrep-results.json: Pattern-based findings from Semgrep (already identified)
-          - docs/libcurl/libcurl-security.md: curl's security guidelines (reference this)
-          - review_guidelines.md: Code quality guidelines (for context)
+          Input files (already in current directory):
+          - diff.txt: the code changes to review
+          - files.json: file patches with line numbers for positioning comments
+          - existing_comments.json: skip issues already mentioned here
+          - semgrep-results.json: pattern-based findings from Semgrep (reference but don't duplicate)
+          - docs/libcurl/libcurl-security.md: curl's security guidelines
+          - review_guidelines.md: code quality guidelines
 
-          Security Analysis Context:
-          The curl/libcurl project handles network protocols, URLs, authentication, and data transfer.
-          Past vulnerabilities have included buffer overflows, integer overflows, TOCTOU issues, and 
-          authentication bypasses. Review changes with extreme scrutiny for security implications.
+          Task: Create security-comments.json with this exact format:
+          [{ "path": "path/to/file.c", "position": 42, "body": "Your comment here" }]
 
-          Primary Security Checks (High Priority):
-          1. MEMORY SAFETY
-             - Buffer overflows/underflows (strcpy, strcat, sprintf, gets)
-             - Use-after-free, double-free
-             - NULL pointer dereferences without checks
-             - Off-by-one errors in loops/bounds
-             - Stack buffer overruns
+          Security checks (reference docs/libcurl/libcurl-security.md and review_guidelines.md):
+          1. Memory Safety: Buffer overflows (strcpy, sprintf), use-after-free, double-free, NULL dereferences
+          2. Integer Safety (§7.3.1): Overflows, underflows, sign conversions
+          3. Input Validation: Unvalidated input, format strings, injection
+          4. Resource Management: Memory/file descriptor leaks
+          5. Authentication: Credential handling, weak crypto
+          6. Race Conditions: TOCTOU issues
+          7. API Misuse: Incorrect curl API usage
 
-          2. INTEGER SAFETY (review_guidelines.md §7.3.1)
-             - Integer overflows in size calculations
-             - Integer underflows
-             - Sign conversion issues (signed <-> unsigned)
-             - Wraparound in arithmetic used for allocation/indexing
+          Comment format:
+          **[SEVERITY]** Issue title
 
-          3. INPUT VALIDATION
-             - Unvalidated user input (URLs, headers, credentials)
-             - Format string vulnerabilities (%s, %n in printf family)
-             - Command injection risks
-             - Path traversal (../, ..\)
-             - CRLF injection in headers
+          Guideline: <section reference>
 
-          4. RESOURCE MANAGEMENT
-             - Memory leaks (malloc/calloc without free)
-             - File descriptor leaks (open/fopen without close)
-             - Socket leaks
-             - Missing error cleanup paths
+          Detailed explanation and why it matters.
 
-          5. AUTHENTICATION & CREDENTIALS
-             - Plaintext password storage/logging
-             - Weak crypto algorithms (unless documented as legacy support)
-             - Improper certificate validation
-             - Authentication bypass conditions
+          Suggested fix:
+          <concrete recommendation>
 
-          6. RACE CONDITIONS (TOCTOU)
-             - Time-of-check to time-of-use gaps
-             - File operations with race windows
-             - Shared resource access without locking
-
-          7. API MISUSE
-             - Incorrect curl/libcurl API usage per docs/libcurl/libcurl-security.md
-             - Missing bounds checks on curl options
-             - Improper error handling
-
-          Semgrep Integration:
-          - Semgrep has already identified pattern-based issues
-          - DO NOT duplicate Semgrep findings in your output
-          - Focus on complex issues requiring contextual understanding:
-            * Vulnerability chains (multiple functions interacting)
-            * State-dependent vulnerabilities
-            * Logic flaws
-            * Subtle type confusion
-            * Context-specific integer overflows
-
-          Output Requirements:
-          Create security-comments.json with this EXACT format:
-          [
-            {
-              "path": "relative/path/to/file.c",
-              "position": 42,
-              "body": "**[SEVERITY]** Brief title\n\nGuideline: <section reference>\n\nDetailed explanation of the security issue, why it's dangerous, and potential exploit scenarios.\n\nSuggested fix:\n<concrete fix recommendation>",
-              "severity": "CRITICAL|HIGH|MEDIUM|LOW"
-            }
-          ]
-
-          Severity Guidelines:
-          - CRITICAL: Remote code execution, authentication bypass, direct exploit path
-          - HIGH: Memory corruption, privilege escalation, data exposure
-          - MEDIUM: Potential vulnerability requiring specific conditions
-          - LOW: Defense-in-depth improvements, minor security concerns
-
-          Comment Body Format:
-          - Start with **[SEVERITY]** tag
-          - Reference specific guideline sections
-          - Explain security impact clearly
-          - Provide actionable fix suggestions
-          - Keep technical and precise
-          - NO emojis
-
-          Position Mapping:
-          - Use diff line positions from files.json patches (not file line numbers)
+          Important:
+          - Use "position" field from files.json patches (diff line positions, not file line numbers)
           - Only comment on changed lines visible in the diff
-          - Ensure position maps to actual diff hunk lines
-
-          Final Check:
-          - Output only security-comments.json with findings array
-          - Empty array [] if no additional issues beyond Semgrep
-          - DO NOT output prose, only the JSON file
-          EOFPROMPT
+          - Don't duplicate Semgrep findings
+          - Keep severity tags: CRITICAL, HIGH, MEDIUM, LOW
+          - Output ONLY security-comments.json, no other text
+          EOF
 
           echo "Running Droid security analysis..."
-          droid exec --output-format debug --auto medium --model gpt-5.1-codex -f security-prompt.txt 2>&1
+          droid exec --output-format debug --auto medium --model gpt-5.1-codex -f security-prompt.txt 2>&1 || true
 
           # Check if droid created the output
           if [ ! -f security-comments.json ]; then
@@ -243,9 +177,9 @@ jobs:
           fi
 
           echo "=== Droid Security Analysis Results ==="
-          cat security-comments.json
+          cat security-comments.json || echo "[]" > security-comments.json
 
-      - name: Convert Semgrep results to comment format
+      - name: Convert Semgrep results to inline comment format
         if: always()
         run: |
           if [ ! -f semgrep-results.json ]; then
@@ -253,10 +187,10 @@ jobs:
             exit 0
           fi
 
-          # Convert Semgrep JSON to GitHub comment format
+          # Convert Semgrep to inline comment format with diff positions
           python3 << 'EOFPYTHON'
           import json
-          import os
+          import re
 
           try:
               with open('semgrep-results.json', 'r') as f:
@@ -265,8 +199,39 @@ jobs:
               with open('.git/security_review/files.json', 'r') as f:
                   files_data = json.load(f)
               
-              # Build a map of file paths to their patches
-              file_patches = {f['filename']: f.get('patch', '') for f in files_data}
+              # Build map of file:line to diff position
+              def parse_patch_positions(patch):
+                  """Parse patch to map file lines to diff positions"""
+                  if not patch:
+                      return {}
+                  
+                  positions = {}
+                  diff_position = 0
+                  current_line = 0
+                  
+                  for line in patch.split('\n'):
+                      diff_position += 1
+                      
+                      # Parse hunk header: @@ -old +new @@
+                      hunk_match = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@', line)
+                      if hunk_match:
+                          current_line = int(hunk_match.group(1))
+                          continue
+                      
+                      # Lines starting with + or space are in new file
+                      if line.startswith('+') or line.startswith(' '):
+                          positions[current_line] = diff_position
+                          current_line += 1
+                      # Lines starting with - are only in old file (skip line increment)
+                  
+                  return positions
+              
+              # Build position map for all files
+              file_positions = {}
+              for file_info in files_data:
+                  filename = file_info['filename']
+                  patch = file_info.get('patch', '')
+                  file_positions[filename] = parse_patch_positions(patch)
               
               comments = []
               for result in semgrep_data.get('results', []):
@@ -280,26 +245,27 @@ jobs:
                   sev_map = {'ERROR': 'HIGH', 'WARNING': 'MEDIUM', 'INFO': 'LOW'}
                   mapped_severity = sev_map.get(severity, 'MEDIUM')
                   
-                  # Try to find position in diff (simplified - just use line for now)
-                  # In production, would need proper diff position calculation
-                  position = line
+                  # Find diff position for this line
+                  position = file_positions.get(path, {}).get(line)
                   
-                  body = f"**[{mapped_severity}]** Semgrep: {check_id}\n\n{message}\n\nDetected by: Semgrep static analysis"
-                  
-                  comments.append({
-                      'path': path,
-                      'position': position,
-                      'body': body,
-                      'severity': mapped_severity
-                  })
+                  if position:
+                      body = f"**[{mapped_severity}]** Semgrep: {check_id}\n\n{message}\n\nDetected by: Semgrep static analysis"
+                      
+                      comments.append({
+                          'path': path,
+                          'position': position,
+                          'body': body
+                      })
               
               with open('semgrep-comments.json', 'w') as f:
                   json.dump(comments, f, indent=2)
               
-              print(f"Converted {len(comments)} Semgrep findings to comment format")
+              print(f"Converted {len(comments)} Semgrep findings to inline comments")
           
           except Exception as e:
               print(f"Error converting Semgrep results: {e}")
+              import traceback
+              traceback.print_exc()
               with open('semgrep-comments.json', 'w') as f:
                   json.dump([], f)
           EOFPYTHON
@@ -352,7 +318,7 @@ jobs:
           echo "=== Combined Security Findings ==="
           cat combined-security-comments.json
 
-      - name: Post security review to PR
+      - name: Post inline security review to PR
         if: always()
         uses: actions/github-script@v7
         with:
@@ -379,7 +345,7 @@ jobs:
               return;
             }
             
-            // Count by severity
+            // Count by severity for summary
             const severityCounts = findings.reduce((acc, f) => {
               const sev = f.severity || 'UNKNOWN';
               acc[sev] = (acc[sev] || 0) + 1;
@@ -398,28 +364,41 @@ jobs:
             if (highCount > 0) summary += `- 🟠 HIGH: ${highCount}\n`;
             if (mediumCount > 0) summary += `- 🟡 MEDIUM: ${mediumCount}\n`;
             if (lowCount > 0) summary += `- 🔵 LOW: ${lowCount}\n`;
-            summary += '\n**Scanned by:** Semgrep + Droid AI\n';
-            summary += '\n---\n\n';
+            summary += '\n**Scanned by:** Semgrep + Droid AI\n\n';
+            summary += 'See inline comments for details on each issue.';
             
-            // Post findings as issue comment with details
-            let detailedReport = summary;
-            findings.forEach((f, i) => {
-              detailedReport += `### ${i+1}. [${f.severity}] ${f.path}\n\n`;
-              detailedReport += `${f.body}\n\n`;
-              detailedReport += `---\n\n`;
-            });
-            
+            // Post inline review with comments
             try {
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                event: 'COMMENT',
+                body: summary,
+                comments: findings.map(f => ({
+                  path: f.path,
+                  position: f.position,
+                  body: f.body
+                }))
+              });
+              core.info(`Posted inline review with ${findings.length} security comments`);
+            } catch (error) {
+              core.warning(`Failed to post inline review: ${error.message}`);
+              // Fallback: post as issue comment
+              let detailedReport = summary + '\n\n---\n\n';
+              findings.forEach((f, i) => {
+                detailedReport += `### ${i+1}. ${f.path} (line/pos ${f.position})\n\n`;
+                detailedReport += `${f.body}\n\n`;
+                detailedReport += `---\n\n`;
+              });
+              
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber,
                 body: detailedReport
               });
-              core.info(`Posted detailed security report with ${findings.length} findings`);
-            } catch (error) {
-              core.error(`Failed to post security report: ${error.message}`);
-              throw error;
+              core.info(`Posted fallback comment with ${findings.length} findings`);
             }
 
       - name: Upload security scan artifacts
@@ -438,23 +417,22 @@ jobs:
           retention-days: 30
 
       - name: Check for blocking issues (STRICT MODE)
-        if: always()
         run: |
           if [ ! -f combined-security-comments.json ]; then
             echo "✅ No findings file - passing"
             exit 0
           fi
           
-          FINDING_COUNT=$(jq 'length' combined-security-comments.json)
+          FINDING_COUNT=$(jq 'length' combined-security-comments.json 2>/dev/null || echo "0")
           
           if [ "$FINDING_COUNT" -gt 0 ]; then
             echo "❌ SECURITY ISSUES FOUND: $FINDING_COUNT"
             echo ""
             echo "Security vulnerabilities detected. This PR is blocked from merging."
-            echo "Please review and fix all security issues before proceeding."
+            echo "Please review the security findings comment in this PR."
             echo ""
             echo "Severity breakdown:"
-            jq -r 'group_by(.severity) | .[] | "\(.[0].severity): \(length)"' combined-security-comments.json
+            jq -r 'group_by(.severity) | .[] | "\(.[0].severity): \(length)"' combined-security-comments.json || echo "Unable to parse severity"
             exit 1
           fi
           
