@@ -1,10 +1,9 @@
-name: Droid Docs Doxygen
+name: Add Doxygen Comments
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request
 
 concurrency:
-  group: droid-docs-doxygen-${{ github.event.pull_request.number }}
+  group: docs-add-doxygen-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -15,14 +14,12 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    if: github.event.pull_request.draft == false
 
     steps:
       - name: Checkout PR head
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Setup droid CLI
@@ -63,12 +60,13 @@ jobs:
       - name: Get changed C files
         id: changed-files
         run: |
-          git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} | grep -E '\.(c|h)$' > changed_files.txt || true
-          if [ -s changed_files.txt ]; then
+          git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '\.(c|h)$' > files.txt || true
+          if [ -s files.txt ]; then
             echo "has_c_files=true" >> $GITHUB_OUTPUT
           else
             echo "has_c_files=false" >> $GITHUB_OUTPUT
           fi
+          cat files.txt
 
       - name: Suggest Doxygen comments
         if: steps.changed-files.outputs.has_c_files == 'true'
@@ -88,7 +86,7 @@ jobs:
           Input files (already in current directory):
           - diff.txt: the code changes to review
           - files.json: file patches with line numbers for positioning comments
-          - changed_files.txt: list of changed C/H files
+          - files.txt: list of changed C/H files
 
           Task: Create comments.json with this exact format:
           [{ "path": "path/to/file.c", "position": 42, "body": "Your comment here" }]
@@ -97,7 +95,6 @@ jobs:
           - Use /** ... */ Doxygen style
           - Include @brief description, @param for each parameter, @return for return value
           - Only suggest for functions lacking documentation
-          - Follow curl project conventions
 
           Comment format (body):
           - DO NOT use GitHub suggestion blocks (```suggestion) - they will delete code
