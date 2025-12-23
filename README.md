@@ -18,6 +18,38 @@ libcurl is the library curl is using to do its job. It is readily available to
 be used by your software. Read [the libcurl
 manpage](https://curl.se/libcurl/c/libcurl.html) to learn how.
 
+## Helper utilities
+
+In addition to the core tool and library, curl provides small helper
+functions that can be used from C code when integrating or extending
+libcurl.
+
+### URL validation
+
+The `curl_url_is_valid` helper checks whether a given URL string is
+well-formed according to curl's basic expectations.
+
+```c
+int curl_url_is_valid(const char *url);
+```
+
+Behavior:
+
+- Returns `1` if `url` is non-NULL, non-empty and uses the `http://` or
+  `https://` scheme.
+- Returns `0` otherwise.
+
+Example:
+
+```c
+if(curl_url_is_valid("https://example.com")) {
+  /* safe to proceed with this URL */
+}
+else {
+  /* handle invalid or unsupported URL */
+}
+```
+
 ## Open Source
 
 curl is Open Source and is distributed under an MIT-like
