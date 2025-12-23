@@ -1,0 +1,72 @@
+# Semgrep Security Configuration for curl/libcurl
+# This configuration focuses on C security vulnerabilities
+
+rules:
+  # Use Semgrep's C security ruleset
+  - id: c-security-audit
+    patterns:
+      - pattern: |
+          strcpy(...)
+    message: |
+      Use of dangerous function strcpy() detected.
+      This can lead to buffer overflow vulnerabilities.
+      Use strncpy(), strlcpy(), or snprintf() instead with proper bounds checking.
+    severity: ERROR
+    languages: [c]
+    metadata:
+      cwe: "CWE-120: Buffer Copy without Checking Size of Input"
+      owasp: "A1: Injection"
+      category: security
+      
+  - id: c-gets-usage
+    patterns:
+      - pattern: gets(...)
+    message: |
+      Use of gets() is extremely dangerous and deprecated.
+      This function has no bounds checking and will cause buffer overflows.
+      Use fgets() instead.
+    severity: ERROR
+    languages: [c]
+    metadata:
+      cwe: "CWE-120: Buffer Copy without Checking Size of Input"
+      
+  - id: c-sprintf-usage
+    patterns:
+      - pattern: sprintf(...)
+    message: |
+      Use of sprintf() without bounds checking detected.
+      This can lead to buffer overflow vulnerabilities.
+      Use snprintf() instead with explicit buffer size.
+    severity: ERROR
+    languages: [c]
+    metadata:
+      cwe: "CWE-120: Buffer Copy without Checking Size of Input"
+      
+  - id: c-format-string-vuln
+    patterns:
+      - pattern: printf($USER_INPUT)
+      - pattern: fprintf($FD, $USER_INPUT)
+      - pattern: sprintf($BUF, $USER_INPUT)
+    message: |
+      Potential format string vulnerability detected.
+      User-controlled input should never be used directly as a format string.
+      Use printf("%s", user_input) instead.
+    severity: ERROR
+    languages: [c]
+    metadata:
+      cwe: "CWE-134: Use of Externally-Controlled Format String"
+      
+  - id: c-null-dereference-risk
+    patterns:
+      - pattern: |
+          $PTR = malloc(...);
+          ...
+          *$PTR
+    message: |
+      Potential NULL pointer dereference.
+      malloc() can return NULL on failure.
+      Always check return value before dereferencing.
+    severity: WARNING
+    languages: [c]
+    metadata:
+      cwe: "CWE-476: NULL Pointer Dereference"
