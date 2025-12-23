@@ -64,15 +64,14 @@ jobs:
           Files changed in this PR are listed in: changed_files.txt
           EOF
 
-          $HOME/.local/bin/droid exec --auto medium --model gpt-4o -f prompt.txt
+          $HOME/.local/bin/droid exec --auto medium --model gpt-5.1 -f prompt.txt
 
       - name: Commit and push
         run: |
           if ! git diff --quiet README.md; then
             git add README.md
-            git commit -m "docs: Update README with new features
-
-Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
+            git commit -m "docs: Update README with new features" \
+              --trailer "Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
             git push origin HEAD
             echo "✅ README updated"
           else

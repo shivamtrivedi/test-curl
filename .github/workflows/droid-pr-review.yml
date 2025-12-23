@@ -115,7 +115,7 @@ jobs:
 
           # Run droid exec with stderr captured
           echo "Running droid exec..."
-          droid exec --output-format debug --auto medium --model gpt-5-codex -f prompt.txt 2>&1
+          droid exec --output-format debug --auto medium --model gpt-5.1-codex -f prompt.txt 2>&1
 
           # Check if comments.json was created
           if [ ! -f comments.json ]; then
