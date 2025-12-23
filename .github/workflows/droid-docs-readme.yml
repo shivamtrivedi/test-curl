@@ -1,0 +1,80 @@
+name: Droid Docs README
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: droid-docs-readme-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Configure git
+        run: |
+          git config user.name "factory-droid[bot]"
+          git config user.email "138933559+factory-droid[bot]@users.noreply.github.com"
+
+      - name: Setup droid CLI
+        run: |
+          curl -fsSL https://app.factory.ai/cli | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} > changed_files.txt
+          if [ -s changed_files.txt ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update README
+        if: steps.changed-files.outputs.has_changes == 'true'
+        env:
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY_PROD }}
+        run: |
+          cat > prompt.txt << 'EOF'
+          Update README.md to document new functionality in this PR.
+
+          Guidelines:
+          - Identify new features/functions/modules
+          - Add to appropriate README section
+          - Keep style consistent
+          - Be concise but informative
+          - Include simple usage example if applicable
+          - Only update if substantial new functionality was added
+
+          Files changed in this PR are listed in: changed_files.txt
+          EOF
+
+          $HOME/.local/bin/droid exec --auto medium --model gpt-4o -f prompt.txt
+
+      - name: Commit and push
+        run: |
+          if ! git diff --quiet README.md; then
+            git add README.md
+            git commit -m "docs: Update README with new features
+
+Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
+            git push origin HEAD
+            echo "✅ README updated"
+          else
+            echo "ℹ️  No README updates needed"
+          fi

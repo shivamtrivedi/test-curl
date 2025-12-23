@@ -1,0 +1,79 @@
+name: Droid Docs Doxygen
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: droid-docs-doxygen-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  add-doxygen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Configure git
+        run: |
+          git config user.name "factory-droid[bot]"
+          git config user.email "138933559+factory-droid[bot]@users.noreply.github.com"
+
+      - name: Setup droid CLI
+        run: |
+          curl -fsSL https://app.factory.ai/cli | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Get changed C files
+        id: changed-files
+        run: |
+          git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} | grep -E '\.(c|h)$' > changed_files.txt || true
+          if [ -s changed_files.txt ]; then
+            echo "has_c_files=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_c_files=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Add Doxygen comments
+        if: steps.changed-files.outputs.has_c_files == 'true'
+        env:
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY_PROD }}
+        run: |
+          cat > prompt.txt << 'EOF'
+          Add Doxygen-style documentation comments to functions in changed C/H files.
+
+          Requirements:
+          - Use /** ... */ style
+          - Place before function definition
+          - Include brief description, @param, @return
+          - Only add to functions lacking documentation
+          - Follow curl project style (check existing files)
+
+          Files changed in this PR are listed in: changed_files.txt
+          EOF
+
+          $HOME/.local/bin/droid exec --auto medium --model gpt-4o -f prompt.txt
+
+      - name: Commit and push
+        run: |
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "docs: Add Doxygen comments
+
+Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
+            git push origin HEAD
+            echo "✅ Doxygen comments added"
+          else
+            echo "ℹ️  No changes needed"
+          fi

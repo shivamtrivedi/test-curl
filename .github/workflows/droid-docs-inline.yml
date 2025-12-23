@@ -1,0 +1,84 @@
+name: Droid Docs Inline
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: droid-docs-inline-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  add-inline-comments:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Configure git
+        run: |
+          git config user.name "factory-droid[bot]"
+          git config user.email "138933559+factory-droid[bot]@users.noreply.github.com"
+
+      - name: Setup droid CLI
+        run: |
+          curl -fsSL https://app.factory.ai/cli | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Get changed C files
+        id: changed-files
+        run: |
+          git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} | grep -E '\.(c|h)$' > changed_files.txt || true
+          if [ -s changed_files.txt ]; then
+            echo "has_c_files=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_c_files=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Add inline comments
+        if: steps.changed-files.outputs.has_c_files == 'true'
+        env:
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY_PROD }}
+        run: |
+          cat > prompt.txt << 'EOF'
+          Add inline comments to explain complex logic in changed C/H files.
+
+          Focus on:
+          - Complex conditionals
+          - Bit manipulation
+          - Buffer operations
+          - Error handling
+
+          Style:
+          - Use // for inline comments
+          - Explain WHY and WHAT, not HOW
+          - Keep brief (1-2 lines)
+          - Don't over-comment trivial code
+
+          Files changed in this PR are listed in: changed_files.txt
+          EOF
+
+          $HOME/.local/bin/droid exec --auto medium --model gpt-4o -f prompt.txt
+
+      - name: Commit and push
+        run: |
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "docs: Add inline explanatory comments
+
+Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
+            git push origin HEAD
+            echo "✅ Inline comments added"
+          else
+            echo "ℹ️  No changes needed"
+          fi
